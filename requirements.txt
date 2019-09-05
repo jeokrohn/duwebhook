@@ -1,0 +1,6 @@
+webexteamssdk
+requests
+webexteamsbot
+beautifulsoup4
+aiohttp
+pytz
