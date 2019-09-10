@@ -10,7 +10,6 @@ import random
 import logging
 import urllib.parse
 
-
 bot_email = 'demo_jkrohn@webex.bot'
 with open('bot_access_token', 'r') as f:
     teams_token = f.readline().strip()
@@ -97,22 +96,6 @@ def traffic(api, message):
         api.messages.create(roomId=room_id, files=[cam_url])
 
     return 'Traffic cam images posted above as requested'
-
-
-def departures(message):
-    """
-    get current departures from the Melbourne airport web page
-    """
-    departures = get_melbourne_departures()
-    # don't show any flights already departed
-    departures = [d for d in departures if d['statusName'] != 'DEPARTED']
-    markup = '\n'.join(('* **{}** flight **{}** to **{}** scheduled **{}** {} Terminal **{}** Gate **{}** {}'.format(
-        d['date'], d['flightNumber'], d['airportNamesDisplay'], d['scheduledTime'],
-        'estimated **{}**'.format(d['estimatedTime']) if d['estimatedTime'] else '',
-        d['terminal'], d['gate'], 'Status **{}**'.format(d['statusName']) if d['statusName'] else '') for d in
-        departures))
-    return markup
-
 
 def number(api, message):
     """
@@ -235,7 +218,6 @@ def main():
     # Add new command
     bot.add_command('/chuck', 'get Chuck Norris joke', get_joke)
     bot.add_command('/traffic', 'show traffic cams', functools.partial(traffic, api))
-    bot.add_command('/departures', 'show Melbourne airport departures', departures)
     bot.add_command('/number', 'get fun fact for a number', functools.partial(number, api))
     bot.add_command('/dilbert', 'get random dilbert comic', functools.partial(dilbert, api))
     bot.add_command('/peanuts', 'get random peanuts comic', peanuts)
