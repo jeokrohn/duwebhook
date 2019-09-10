@@ -1,4 +1,3 @@
-from typing import Optional, Callable, List, Coroutine
 import asyncio
 import aiohttp
 import os
@@ -7,12 +6,17 @@ import webexteamssdk
 import logging
 import functools
 import base64
+from demobot import get_joke, traffic, number, dilbert, peanuts
 
+from typing import Optional, Callable, List, Coroutine, Dict, Any, NoReturn
+
+ALWAYS_USE_NEW_DEVICE = True  # if set all existing Bot devices will be deleted
 WDM_DEVICES = 'https://wdm-a.wbx2.com/wdm/api/v1/devices'
 
 log = logging.getLogger(__name__)
 
 MessageCallback = Callable[[webexteamssdk.Message], Coroutine]
+
 
 class BotSocket:
     """
@@ -39,10 +43,11 @@ class BotSocket:
         self._default_action = default_action
 
     @property
-    def auth(self):
+    def auth(self) -> str:
         return f'Bearer {self._token}'
 
-    async def request(self, method: str, url: str, headers=None, **kwargs):
+    async def request(self, method: str, url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> Dict[
+        str, Any]:
         headers = headers or dict()
         headers['Authorization'] = self.auth
         async with self._session.request(method=method, url=url, headers=headers, **kwargs) as r:
@@ -50,16 +55,28 @@ class BotSocket:
             result = await r.json()
         return result
 
-    async def get(self, url, **kwargs):
+    async def get(self, url: str, **kwargs) -> Dict[str, Any]:
         return await self.request(method='GET', url=url, **kwargs)
 
-    async def post(self, url, **kwargs):
+    async def post(self, url: str, **kwargs) -> Dict[str, Any]:
         return await self.request(method='POST', url=url, **kwargs)
 
-    async def find_device(self) -> Optional[dict]:
+    async def delete(self, url: str, **kwargs) -> Dict[str, Any]:
+        return await self.request(method='DELETE', url=url, **kwargs)
+
+    async def find_device(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the WDM device list and return the device created by the bot (if any)
+        :return: existing device or None
+        """
         try:
             r = await self.get(url=WDM_DEVICES)
             devices = r['devices']
+            if ALWAYS_USE_NEW_DEVICE:
+                log.debug(f'deleting {len(devices)} device(s)...')
+                tasks = [self.delete(url=d['url']) for d in devices]
+                r = await asyncio.gather(*tasks, return_exceptions=True)
+                devices = []
             # there should only be one device!?
             if len(devices) > 1:
                 log.warning(f'Found {len(devices)} devices: {", ".join(d["name"] for d in devices)}')
@@ -71,7 +88,11 @@ class BotSocket:
             raise e
         return device
 
-    async def create_device(self) -> dict:
+    async def create_device(self) -> Dict[str, Any]:
+        """
+        create/register a new WDM device for the bot
+        :return: device
+        """
         device = dict(
             deviceName=f'{self._device_name}-client',
             deviceType='DESKTOP',
@@ -85,14 +106,25 @@ class BotSocket:
         return device
 
     async def get_message(self, message_id: str) -> Optional[webexteamssdk.Message]:
+        """
+        Get a message given a message id
+        :param message_id: message id; can be a UUID or a Webex id (api is fine w/ both!)
+        :return: obtained message or None
+        """
         try:
             r = await self.get(url=f'https://api.ciscospark.com/v1/messages/{message_id}')
             return webexteamssdk.Message(r)
         except Exception as e:
             return None
 
-    def run(self):
-        async def process(message: aiohttp.WSMessage, ignore_emails: List[str], loop:asyncio.AbstractEventLoop) -> None:
+    def run(self) -> NoReturn:
+        """
+        Actually run the bot; never returns
+        :return: never returns
+        """
+
+        async def process(message: aiohttp.WSMessage, ignore_emails: List[str],
+                          loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
             """
             Get details of message references in a given activity and call the defined callback w/ the detailed message
             data this is run in a thread to avoid blocking asynchronous handling
@@ -131,23 +163,26 @@ class BotSocket:
                         break
 
                 # Build the reply to the user
-                reply = ""
+                reply = None
 
                 # Take action based on command
                 # If no command found, send the default_action
                 if command in [""] and self._default_action:
                     reply = await self._commands[self._default_action]["callback"](message)
                 elif command in self._commands.keys():
-                    reply = await self._commands[command]["callback"](message)
+                    reply = self._commands[command]["callback"](message)
+                    if asyncio.iscoroutine(reply):
+                        reply = await reply
                 else:
                     pass
 
                 # allow command handlers to craft their own Teams message
                 if reply:
+                    loop = loop or asyncio.get_running_loop()
                     loop.call_soon(functools.partial(self._api.messages.create, roomId=message.roomId, markdown=reply))
                 return
 
-        async def as_run(loop):
+        async def as_run() -> NoReturn:
             """
             find/create device registration and listen for messages on websocket. For posted messages a task is
             scheduled to call the configured callback with the details of the posted message. This call is executed
@@ -158,6 +193,7 @@ class BotSocket:
             while True:
                 # find/create device registration
                 device = await self.find_device()
+                device = None
                 if device:
                     log.debug('using existing device')
                 else:
@@ -173,14 +209,13 @@ class BotSocket:
                 async with self._session.ws_connect(url=wss_url, headers={'Authorization': self.auth}) as wss:
                     async for message in wss:
                         log.debug(f'got message from websocket: {message}')
-                        await process(message, ignore_emails, loop)
+                        await process(message, ignore_emails)
                     # async for
                 # async with
             # while True
 
         # run async code
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(as_run(loop))
+        asyncio.run(as_run())
 
     def add_command(self, command, help_message, callback):
         """
@@ -208,7 +243,7 @@ class BotSocket:
         :return:
         """
         cmd_loc = text.find(command)
-        message = text[cmd_loc + len(command) :]
+        message = text[cmd_loc + len(command):]
         return message
 
     def set_greeting(self, callback):
@@ -236,7 +271,7 @@ class BotSocket:
                 message += "* **%s**: %s \n" % (c[0], c[1]["help"])
         return message
 
-    async def send_echo(self, message:webexteamssdk.Message):
+    async def send_echo(self, message: webexteamssdk.Message):
         """
         Sample command function that just echos back the sent message
         :param post_data:
@@ -263,6 +298,11 @@ if __name__ == '__main__':
                         format='%(asctime)s %(threadName)s %(name)-12s %(levelname)-8s %(message)s')
     logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
     logging.getLogger('asyncio').setLevel(logging.INFO)
-    helper = BotSocket(access_token=access_token,
-                       message_callback=functools.partial(handle_message, api))
-    helper.run()
+    bot = BotSocket(access_token=access_token,
+                    message_callback=functools.partial(handle_message, api))
+    bot.add_command('/chuck', 'get Chuck Norris joke', get_joke)
+    bot.add_command('/traffic', 'show traffic cams', functools.partial(traffic, api))
+    bot.add_command('/number', 'get fun fact for a number', functools.partial(number, api))
+    bot.add_command('/dilbert', 'get random dilbert comic', functools.partial(dilbert, api))
+    bot.add_command('/peanuts', 'get random peanuts comic', peanuts)
+    bot.run()
