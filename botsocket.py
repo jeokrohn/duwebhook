@@ -7,10 +7,11 @@ import logging
 import functools
 import base64
 from demobot import get_joke, traffic, number, dilbert, peanuts
+from concurrent.futures import ThreadPoolExecutor
 
 from typing import Optional, Callable, List, Coroutine, Dict, Any, NoReturn
 
-ALWAYS_USE_NEW_DEVICE = True  # if set all existing Bot devices will be deleted
+ALWAYS_USE_NEW_DEVICE = False  # if set all existing Bot devices will be deleted
 WDM_DEVICES = 'https://wdm-a.wbx2.com/wdm/api/v1/devices'
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class BotSocket:
             "/help": {"help": "Get help.", "callback": self.send_help},
         }
         self._default_action = default_action
+        self._executor = ThreadPoolExecutor(max_workers=4)
 
     @property
     def auth(self) -> str:
@@ -61,6 +63,9 @@ class BotSocket:
     async def post(self, url: str, **kwargs) -> Dict[str, Any]:
         return await self.request(method='POST', url=url, **kwargs)
 
+    async def put(self, url: str, **kwargs) -> Dict[str, Any]:
+        return await self.request(method='PUT', url=url, **kwargs)
+
     async def delete(self, url: str, **kwargs) -> Dict[str, Any]:
         return await self.request(method='DELETE', url=url, **kwargs)
 
@@ -72,15 +77,19 @@ class BotSocket:
         try:
             r = await self.get(url=WDM_DEVICES)
             devices = r['devices']
-            if ALWAYS_USE_NEW_DEVICE:
+            # there should only be one device!?
+            if len(devices) > 1:
+                log.warning(f'Found {len(devices)} devices: {", ".join(d["name"] for d in devices)}')
+            if ALWAYS_USE_NEW_DEVICE or len(devices) > 1:
                 log.debug(f'deleting {len(devices)} device(s)...')
                 tasks = [self.delete(url=d['url']) for d in devices]
                 r = await asyncio.gather(*tasks, return_exceptions=True)
                 devices = []
-            # there should only be one device!?
-            if len(devices) > 1:
-                log.warning(f'Found {len(devices)} devices: {", ".join(d["name"] for d in devices)}')
             device = next((d for d in devices if d['name'] == self._device_name), None)
+            if device is not None:
+                # update registration
+                log.debug(f'Updating registration {device["url"]}')
+                device = await self.put(url = device['url'], json=device)
         except aiohttp.ClientResponseError as e:
             e: aiohttp.ClientResponseError
             if e.status == 404:
@@ -103,6 +112,7 @@ class BotSocket:
             systemVersion='0.1'
         )
         device = await self.post(url=WDM_DEVICES, json=device)
+        log.debug(f'New device {device["url"]}')
         return device
 
     async def get_message(self, message_id: str) -> Optional[webexteamssdk.Message]:
@@ -123,64 +133,60 @@ class BotSocket:
         :return: never returns
         """
 
-        async def process(message: aiohttp.WSMessage, ignore_emails: List[str],
-                          loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+        def process(message: webexteamssdk.Message)-> None:
             """
             Get details of message references in a given activity and call the defined callback w/ the detailed message
-            data this is run in a thread to avoid blocking asynchronous handling
+            data
+            this is run in a thread to avoid blocking asynchronous handling
             :param message: websocket message to process
             :param ignore_emails: list of emails to ignore
             """
-            if self._message_callback is None:
-                # nothing to do if there is no callback
-                return
-            data = json.loads(message.data.decode('utf8'))
-            data = data['data']
-            if data['eventType'] != 'conversation.activity':
-                return
-            activity = data['activity']
-            if activity['verb'] != 'post':
-                return
-            if activity['actor']['emailAddress'] in ignore_emails:
-                log.debug(f'ignoring message from self')
-                return
-            message_id = activity['id']
 
+            # Log details of message
+            log.debug(f'process: message {message.id} from: {message.personEmail}')
+
+            # Find the command that was sent, if any
+            command = ""
+            for c in self._commands.items():
+                if message.text.find(c[0]) != -1:
+                    command = c[0]
+                    log.debug(f'Found command: {command}')
+                    # If a command was found, stop looking for others
+                    break
+
+            # Build the reply to the user
+            reply = None
+
+            # Take action based on command
+            # If no command found, send the default_action
+            if command in [""] and self._default_action:
+                reply = self._commands[self._default_action]["callback"](message)
+            elif command in self._commands.keys():
+                reply = self._commands[command]["callback"](message)
+            else:
+                pass
+
+            # allow command handlers to craft their own Teams message
+            if reply:
+                self._api.messages.create(roomId=message.roomId, markdown=reply)
+            log.debug(f'process: message {message.id} from: {message.personEmail} done')
+            return
+
+        async def get_message_and_process(message_id:str)->None:
+            """
+            get an actual (unencrypted) message via the public API and process the message in a Thread
+            :param message_id: message id
+            :return: None
+            """
             # get the actual (unencrypted) message via the public APIs
             # luckily we can actually pass a UUID to the public API as well :-)
             message = await self.get_message(message_id=message_id)
-            if message is not None:
-                # Log details on message
-                log.debug(f'Message from: {message.personEmail}')
-
-                # Find the command that was sent, if any
-                command = ""
-                for c in self._commands.items():
-                    if message.text.find(c[0]) != -1:
-                        command = c[0]
-                        log.debug('Found command: {comnand}')
-                        # If a command was found, stop looking for others
-                        break
-
-                # Build the reply to the user
-                reply = None
-
-                # Take action based on command
-                # If no command found, send the default_action
-                if command in [""] and self._default_action:
-                    reply = await self._commands[self._default_action]["callback"](message)
-                elif command in self._commands.keys():
-                    reply = self._commands[command]["callback"](message)
-                    if asyncio.iscoroutine(reply):
-                        reply = await reply
-                else:
-                    pass
-
-                # allow command handlers to craft their own Teams message
-                if reply:
-                    loop = loop or asyncio.get_running_loop()
-                    loop.call_soon(functools.partial(self._api.messages.create, roomId=message.roomId, markdown=reply))
+            if message is None:
                 return
+
+            # schedule execution of process(message)
+            self._executor.submit(process, message)
+            log.debug(f'scheduled processing of message: {message_id}, {message}')
 
         async def as_run() -> NoReturn:
             """
@@ -190,10 +196,10 @@ class BotSocket:
             received on the websocket
             """
             self._session = aiohttp.ClientSession()
+            loop = asyncio.get_running_loop()
             while True:
                 # find/create device registration
                 device = await self.find_device()
-                device = None
                 if device:
                     log.debug('using existing device')
                 else:
@@ -209,7 +215,25 @@ class BotSocket:
                 async with self._session.ws_connect(url=wss_url, headers={'Authorization': self.auth}) as wss:
                     async for message in wss:
                         log.debug(f'got message from websocket: {message}')
-                        await process(message, ignore_emails)
+
+                        if self._message_callback is None:
+                            # nothing to do if there is no callback
+                            continue
+                        data = json.loads(message.data.decode('utf8'))
+                        data = data['data']
+                        if data['eventType'] != 'conversation.activity':
+                            continue
+                        activity = data['activity']
+                        if activity['verb'] != 'post':
+                            continue
+                        if activity['actor']['emailAddress'] in ignore_emails:
+                            log.debug(f'ignoring message from self')
+                            continue
+
+                        # create task to get message details and schedule processing
+                        # we don't want to delay handling of messages on the websocket
+                        message_id = activity['id']
+                        loop.create_task(get_message_and_process(message_id=message_id))
                     # async for
                 # async with
             # while True
@@ -258,7 +282,7 @@ class BotSocket:
         self.default_action = "/greeting"
 
     # *** Default Commands included in Bot
-    async def send_help(self, message):
+    def send_help(self, message):
         """
         Construct a help message for users.
         :param post_data:
@@ -271,7 +295,7 @@ class BotSocket:
                 message += "* **%s**: %s \n" % (c[0], c[1]["help"])
         return message
 
-    async def send_echo(self, message: webexteamssdk.Message):
+    def send_echo(self, message: webexteamssdk.Message):
         """
         Sample command function that just echos back the sent message
         :param post_data:
