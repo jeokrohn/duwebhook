@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 import random
 import logging
 import urllib.parse
+import flask
+import json
 
 bot_email = 'demo_jkrohn@webex.bot'
 with open('bot_access_token', 'r') as f:
@@ -199,6 +201,243 @@ def peanuts(message):
 
     return message
 
+def card_demo(api, message):
+    card_json = """{
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.0",
+        "body": [
+            {
+                "type": "TextBlock",
+                "size": "Medium",
+                "weight": "Bolder",
+                "text": "Input.Text elements",
+                "horizontalAlignment": "Center"
+            },
+            {
+                "type": "Input.Text",
+                "placeholder": "Name",
+                "style": "text",
+                "maxLength": 0,
+                "id": "SimpleVal"
+            },
+            {
+                "type": "Input.Text",
+                "placeholder": "Homepage",
+                "style": "Url",
+                "maxLength": 0,
+                "id": "UrlVal"
+            },
+            {
+                "type": "Input.Text",
+                "placeholder": "Email",
+                "style": "Email",
+                "maxLength": 0,
+                "id": "EmailVal"
+            },
+            {
+                "type": "Input.Text",
+                "placeholder": "Phone",
+                "style": "Tel",
+                "maxLength": 0,
+                "id": "TelVal"
+            },
+            {
+                "type": "Input.Text",
+                "placeholder": "Comments",
+                "style": "text",
+                "isMultiline": true,
+                "maxLength": 0,
+                "id": "MultiLineVal"
+            },
+            {
+                "type": "Input.Number",
+                "placeholder": "Quantity",
+                "min": -5,
+                "max": 5,
+                "id": "NumVal"
+            },
+            {
+                "type": "Input.Date",
+                "placeholder": "Due Date",
+                "id": "DateVal",
+                "value": "2017-09-20"
+            },
+            {
+                "type": "Input.Time",
+                "placeholder": "Start time",
+                "id": "TimeVal",
+                "value": "16:59"
+            },
+            {
+                "type": "TextBlock",
+                "size": "Medium",
+                "weight": "Bolder",
+                "text": "Input.ChoiceSet",
+                "horizontalAlignment": "Center"
+            },
+            {
+                "type": "TextBlock",
+                "text": "What color do you want? (compact)"
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "CompactSelectVal",
+                "value": "1",
+                "choices": [
+                    {
+                        "title": "Red",
+                        "value": "1"
+                    },
+                    {
+                        "title": "Green",
+                        "value": "2"
+                    },
+                    {
+                        "title": "Blue",
+                        "value": "3"
+                    }
+                ]
+            },
+            {
+                "type": "TextBlock",
+                "text": "What color do you want? (expanded)"
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "SingleSelectVal",
+                "style": "expanded",
+                "value": "1",
+                "choices": [
+                    {
+                        "title": "Red",
+                        "value": "1"
+                    },
+                    {
+                        "title": "Green",
+                        "value": "2"
+                    },
+                    {
+                        "title": "Blue",
+                        "value": "3"
+                    }
+                ]
+            },
+            {
+                "type": "TextBlock",
+                "text": "What colors do you want? (multiselect)"
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "MultiSelectVal",
+                "isMultiSelect": true,
+                "value": "1,3",
+                "choices": [
+                    {
+                        "title": "Red",
+                        "value": "1"
+                    },
+                    {
+                        "title": "Green",
+                        "value": "2"
+                    },
+                    {
+                        "title": "Blue",
+                        "value": "3"
+                    }
+                ]
+            },
+            {
+                "type": "TextBlock",
+                "size": "Medium",
+                "weight": "Bolder",
+                "text": "Input.Toggle",
+                "horizontalAlignment": "Center"
+            },
+            {
+                "type": "Input.Toggle",
+                "title": "I accept the terms and conditions (True/False)",
+                "id": "AcceptsTerms",
+                "value": "false",
+                "wrap": false
+            },
+            {
+                "type": "Input.Toggle",
+                "title": "Red cars are better than other cars",
+                "valueOn": "RedCars",
+                "valueOff": "NotRedCars",
+                "id": "ColorPreference",
+                "value": "NotRedCars",
+                "wrap": false
+            }
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Submit",
+                "data": {
+                    "id": "1234567890"
+                }
+            },
+            {
+                "type": "Action.ShowCard",
+                "title": "Show Card",
+                "card": {
+                    "type": "AdaptiveCard",
+                    "body": [
+                        {
+                            "type": "Input.Text",
+                            "placeholder": "enter comment",
+                            "style": "text",
+                            "maxLength": 0,
+                            "id": "CommentVal"
+                        }
+                    ],
+                    "actions": [
+                        {
+                            "type": "Action.Submit",
+                            "title": "OK"
+                        }
+                    ],
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json"
+                }
+            }
+        ]
+    }"""
+    card_json=json.loads(card_json)
+    data = {
+        'roomId': message.roomId,
+        'text': 'simple adaptive card demo',
+        'fallbackText': 'this is an adaptive card demo. Too bad your app does not support this',
+        'attachments': [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": card_json
+            }
+        ]
+    }
+    headers = {'Authorization': f'Bearer {teams_token}'}
+    r = requests.post('https://api.ciscospark.com/v1/messages', json=data, headers=headers)
+    return ''
+    pass
+
+def card_action(api):
+    """
+    registered endpoint in Flask for the card action webhook
+    """
+    request = flask.request.json
+    attachment_id = request['data']['id']
+
+    # get the attachment
+    headers = {'Authorization': f'Bearer {teams_token}'}
+    r = requests.get(f'https://api.ciscospark.com/v1/attachment/actions/{attachment_id}', headers=headers)
+    r.raise_for_status()
+    action = r.json()
+    inputs = '\n'.join(f'{k}={v}' for k,v in action['inputs'].items())
+    text = 'Here is what i got:\n\n'
+    text = f'{text}{inputs}'
+    api.messages.create(roomId=action['roomId'], text = text)
+    return 'ok'
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
@@ -215,12 +454,27 @@ def main():
     # Spark API
     api = webexteamssdk.WebexTeamsAPI(teams_token)
 
+    # for the adaptive card demo we also need a webhook for card actions
+    url = urllib.parse.urljoin(bot_url, 'card_action')
+    name = f'{bot_app_name}_card_action'
+    wh = next((h for h in api.webhooks.list() if h.name==name), None)
+    if wh is None:
+        # create new webhook for card activities
+        api.webhooks.create(name=name, targetUrl=url, resource='attachmentActions', event='created')
+    else:
+        # update existing webhook
+        api.webhooks.update(webhookId=wh.id, name=name, targetUrl=url, resource='attachmentActions', event='created')
+
+    # register code for that webhook
+    bot.add_url_rule('/card_action', 'card_action', functools.partial(card_action, api), methods=['POST'])
+
     # Add new command
     bot.add_command('/chuck', 'get Chuck Norris joke', get_joke)
     bot.add_command('/traffic', 'show traffic cams', functools.partial(traffic, api))
     bot.add_command('/number', 'get fun fact for a number', functools.partial(number, api))
     bot.add_command('/dilbert', 'get random dilbert comic', functools.partial(dilbert, api))
     bot.add_command('/peanuts', 'get random peanuts comic', peanuts)
+    bot.add_command('/card', 'create an adaptive card', functools.partial(card_demo, api))
 
     # run bot
     bot.run(host='0.0.0.0', port=5000)
