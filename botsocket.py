@@ -74,6 +74,7 @@ class BotSocket:
         Get the WDM device list and return the device created by the bot (if any)
         :return: existing device or None
         """
+        device = None
         try:
             r = await self.get(url=WDM_DEVICES)
             devices = r['devices']
@@ -85,6 +86,7 @@ class BotSocket:
                 tasks = [self.delete(url=d['url']) for d in devices]
                 r = await asyncio.gather(*tasks, return_exceptions=True)
                 devices = []
+            # get a device from the (potentially empty) list of devices
             device = next((d for d in devices if d['name'] == self._device_name), None)
             if device is not None:
                 # update registration
@@ -93,6 +95,7 @@ class BotSocket:
         except aiohttp.ClientResponseError as e:
             e: aiohttp.ClientResponseError
             if e.status == 404:
+                # api throws a 404 if no devices exist
                 return None
             raise e
         return device
