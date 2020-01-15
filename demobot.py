@@ -11,24 +11,23 @@ import logging
 import urllib.parse
 import flask
 import json
+import os
 
 bot_email = 'demo_jkrohn@webex.bot'
 with open('bot_access_token', 'r') as f:
     teams_token = f.readline().strip()
 bot_app_name = 'Demo Bot jkrohn'
 
-"""
 # Retrieve required details from environment variables
 if False:
-    bot_email = os.getenv('BOT_EMAIL')
-    teams_token = os.getenv('BOT_ACCESS_TOKEN')
-    bot_app_name = os.getenv('BOT_APP_NAME')
-else:
-    bot_email = os.getenv('DEMOBOT_EMAIL')
-    teams_token = os.getenv('DEMOBOT_ACCESS_TOKEN')
-    bot_app_name = os.getenv('DEMOBOT_NAME')
-"""
-
+    if True:
+        bot_email = os.getenv('BOT_EMAIL')
+        teams_token = os.getenv('BOT_ACCESS_TOKEN')
+        bot_app_name = os.getenv('BOT_APP_NAME')
+    else:
+        bot_email = os.getenv('DEMOBOT_EMAIL')
+        teams_token = os.getenv('DEMOBOT_ACCESS_TOKEN')
+        bot_app_name = os.getenv('DEMOBOT_NAME')
 
 def get_joke(message):
     # get a random Chuck Norris joke
@@ -200,6 +199,15 @@ def peanuts(message):
         message = 'Sorry, couldn\'t find any Peanuts comics'
 
     return message
+
+def quote(message):
+    r = requests.get('https://quotesondesign.com/wp-json/wp/v2/posts/?orderby=rand')
+    r = r.json()
+    r = random.choice(r)
+    quote = r['content']['rendered']
+    author = r['title']['rendered']
+    r = f'{quote}\n\n{author}'
+    return r
 
 def card_demo(api, message):
     card_json = """{
@@ -454,6 +462,8 @@ def main():
     # Spark API
     api = webexteamssdk.WebexTeamsAPI(teams_token)
 
+    logging.debug(f'Bot identity: {api.people.me()}')
+
     # for the adaptive card demo we also need a webhook for card actions
     url = urllib.parse.urljoin(bot_url, 'card_action')
     name = f'{bot_app_name}_card_action'
@@ -471,6 +481,7 @@ def main():
     # Add new command
     bot.add_command('/chuck', 'get Chuck Norris joke', get_joke)
     bot.add_command('/traffic', 'show traffic cams', functools.partial(traffic, api))
+    bot.add_command('/quote', 'get a random quote', quote)
     bot.add_command('/number', 'get fun fact for a number', functools.partial(number, api))
     bot.add_command('/dilbert', 'get random dilbert comic', functools.partial(dilbert, api))
     bot.add_command('/peanuts', 'get random peanuts comic', peanuts)
